@@ -37,14 +37,12 @@ class TableExtractor:
         """Return (rows, strategy_name) using best successful extractor."""
         if self.fast_mode:
             strategy_names = list(config.FAST_EXTRACTION_STRATEGIES)
-            if template.name == "monzo" and "monzo_text" not in strategy_names:
-                strategy_names.insert(0, "monzo_text")
+            if template.name == "monzo" and "monzo" not in strategy_names:
+                strategy_names.insert(0, "monzo")
         else:
             strategy_names = list(config.EXTRACTION_STRATEGIES)
             if template.name == "monzo":
-                strategy_names = ["monzo_text"] + [
-                    s for s in strategy_names if s != "monzo_text"
-                ]
+                strategy_names = ["monzo"] + [s for s in strategy_names if s != "monzo"]
 
         strategies = [
             (name, self._strategy_fn(name, pdf_path, template))
@@ -78,7 +76,7 @@ class TableExtractor:
             if on_progress:
                 on_progress(f"{name}: {len(rows)} rows (quality {score:.0%})")
 
-            if score >= config.QUALITY_SCORE_THRESHOLD:
+            if score >= config.QUALITY_SCORE_THRESHOLD and score >= best_score:
                 return rows, name
 
             if score > best_score:
@@ -93,7 +91,7 @@ class TableExtractor:
         return [], ""
 
     def _strategy_fn(self, name: str, pdf_path: Path, template: BankTemplate):
-        if name == "monzo_text":
+        if name == "monzo":
             return lambda: extract_monzo_statement(pdf_path)
         if name == "camelot_lattice":
             return lambda: extract_with_camelot(pdf_path, template, "lattice", self.debug)
@@ -118,13 +116,14 @@ def _run_with_timeout(fn, timeout: int):
 
 
 def quality_score(rows: list[RawRow], template: BankTemplate) -> float:
-    """Fraction of rows with valid date and amount."""
+    """Score rows: date, amount, description length, no junk."""
     if not rows:
         return 0.0
     valid = 0
     for row in rows:
         has_date = bool(row.date and parse_date(row.date, template.locale))
         has_amount = parse_amount(row.amount) is not None
-        if has_date and has_amount:
+        desc_ok = len((row.description or "").strip()) >= 5
+        if has_date and has_amount and desc_ok:
             valid += 1
     return valid / len(rows)

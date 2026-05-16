@@ -10,6 +10,7 @@ from csv_generator import generate_csv
 from parser.bank_detector import BankTemplateDetector
 from parser.extractor import TableExtractor
 from parser.header_footer import HeaderFooterCleaner
+from parser.post_process import post_process_rows
 from parser.row_reconstructor import RowReconstructor
 from parser.templates.base import RawRow
 from utils.logging_setup import get_failed_rows_path, get_validation_log_path
@@ -95,9 +96,13 @@ class PipelineOrchestrator:
         cleaner = HeaderFooterCleaner()
         rows = cleaner.clean(rows)
 
-        failed_path = get_failed_rows_path(self.run_id) if self.run_id else None
-        reconstructor = RowReconstructor(template, failed_path)
-        rows = reconstructor.reconstruct(rows)
+        layout_sources = {"monzo_layout", "monzo_text", "monzo"}
+        if strategy not in layout_sources:
+            failed_path = get_failed_rows_path(self.run_id) if self.run_id else None
+            reconstructor = RowReconstructor(template, failed_path)
+            rows = reconstructor.reconstruct(rows)
+
+        rows = post_process_rows(rows, template.locale)
 
         validation_path = get_validation_log_path(self.run_id) if self.run_id else None
         validator = ValidationEngine(template, validation_path)

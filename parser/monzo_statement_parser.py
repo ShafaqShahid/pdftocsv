@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-
 import pdfplumber
 
 from parser.templates.base import RawRow
@@ -13,11 +12,9 @@ from parser.templates.base import RawRow
 logger = logging.getLogger(__name__)
 
 DATE_PREFIX = re.compile(r"^(\d{2}/\d{2}/\d{4})(?:\s+(.*))?$")
-# Date then amount then balance (description in prior lines)
 DATE_AMOUNT_BALANCE = re.compile(
     r"^(\d{2}/\d{2}/\d{4})\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$"
 )
-# Date, description..., amount, balance on one line
 DATE_FULL = re.compile(
     r"^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$"
 )
@@ -59,13 +56,57 @@ SKIP_PATTERNS = [
 
 
 def _normalize_line(line: str) -> str:
-    line = line.replace("\ufffd", "").replace("£", "").replace("", "")
+    line = line.replace("\ufffd", "").replace("£", "")
     line = re.sub(r"\s+", " ", line).strip()
     return line
 
 
+def _row_quality(rows: list[RawRow]) -> float:
+    from utils.amounts import parse_amount
+    from utils.dates import parse_date
+
+    if not rows:
+        return 0.0
+    good = 0
+    for r in rows:
+        if not parse_date(r.date, "uk") or parse_amount(r.amount) is None:
+            continue
+        d = r.description or ""
+        if len(d) < 10:
+            continue
+        if re.search(r"fscs|730427|prudential|broadwalk", d, re.I):
+            continue
+        if re.match(r"^\(faster payments\)$", d, re.I):
+            continue
+        good += 1
+    return good / len(rows)
+
+
 def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
-    """Extract transactions from Monzo Business statement PDF."""
+    """Extract Monzo transactions — picks best of layout vs text parsing."""
+    from parser.monzo_layout_parser import extract_monzo_layout
+
+    layout_rows = extract_monzo_layout(pdf_path)
+    text_rows = _extract_monzo_text(pdf_path)
+
+    q_layout = _row_quality(layout_rows)
+    q_text = _row_quality(text_rows)
+    logger.info(
+        "Monzo compare: layout=%d (q=%.2f) text=%d (q=%.2f)",
+        len(layout_rows),
+        q_layout,
+        len(text_rows),
+        q_text,
+    )
+
+    if q_text >= q_layout and text_rows:
+        return text_rows
+    if layout_rows:
+        return layout_rows
+    return text_rows
+
+
+def _extract_monzo_text(pdf_path: Path) -> list[RawRow]:
     lines: list[str] = []
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -75,10 +116,7 @@ def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
     except Exception as e:
         logger.warning("Monzo text read failed: %s", e)
         return []
-
-    rows = parse_monzo_lines(lines)
-    logger.info("Monzo parser extracted %d rows from %s", len(rows), pdf_path.name)
-    return rows
+    return parse_monzo_lines(lines)
 
 
 def _should_skip(line: str) -> bool:
@@ -87,17 +125,12 @@ def _should_skip(line: str) -> bool:
     if PAGE_MARKER.search(line):
         return True
     if DATE_PREFIX.match(line) and " - " in line and line.count("/") >= 4:
-        # Statement period: 01/04/2026 - 01/05/2026
         return True
     return any(p.search(line) for p in SKIP_PATTERNS)
 
 
 def parse_monzo_lines(lines: list[str]) -> list[RawRow]:
-    """
-    Parse Monzo lines from pdfplumber text order.
-
-    pdfplumber often outputs description lines *before* the date+amount+balance line.
-    """
+    """Parse Monzo lines from pdfplumber extract_text order."""
     rows: list[RawRow] = []
     pending_desc: list[str] = []
     seen_table = False
@@ -132,7 +165,6 @@ def parse_monzo_lines(lines: list[str]) -> list[RawRow]:
             pending_desc = []
             continue
 
-        # Reference / continuation attached to previous transaction
         if rows and (
             REFERENCE_ONLY.match(line)
             or REFERENCE_LINE.match(line)
@@ -143,12 +175,7 @@ def parse_monzo_lines(lines: list[str]) -> list[RawRow]:
 
         m_compact = DATE_AMOUNT_BALANCE.match(line)
         if m_compact:
-            flush(
-                m_compact.group(1),
-                m_compact.group(2),
-                m_compact.group(3),
-                pending_desc,
-            )
+            flush(m_compact.group(1), m_compact.group(2), m_compact.group(3), pending_desc)
             pending_desc = []
             continue
 
@@ -163,18 +190,16 @@ def parse_monzo_lines(lines: list[str]) -> list[RawRow]:
         date_m = DATE_PREFIX.match(line)
         if date_m and date_m.group(2):
             rest = date_m.group(2).strip()
-            m_rest = re.match(
-                r"^(.+?)\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$",
-                rest,
-            )
+            m_rest = re.match(r"^(.+?)\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$", rest)
             if m_rest:
                 parts = pending_desc + [m_rest.group(1).strip()]
                 flush(date_m.group(1), m_rest.group(2), m_rest.group(3), parts)
                 pending_desc = []
                 continue
 
-        # Description fragment (appears before date line in pdfplumber output)
         if not DATE_PREFIX.match(line):
             pending_desc.append(line)
 
-    return rows
+    from parser.monzo_layout_parser import _sort_chronological
+
+    return _sort_chronological(rows)
