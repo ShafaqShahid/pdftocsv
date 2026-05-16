@@ -26,17 +26,23 @@ EXTRACTION_STRATEGIES = [
 # Fast mode for web/Streamlit: skip camelot, pdfplumber first
 FAST_EXTRACTION_STRATEGIES = [
     "monzo",
+    "monzo_text",
     "pdfplumber",
-    "regex",
 ]
+
+# Regex is slow on Streamlit Cloud — skip in fast mode
+SKIP_REGEX_IN_FAST_MODE = True
 
 # Per-strategy timeouts (seconds) — prevents infinite "loading"
 STRATEGY_TIMEOUT_SECONDS = {
     "camelot_lattice": 45,
     "camelot_stream": 45,
-    "monzo": 90,
-    "pdfplumber": 90,
-    "regex": 60,
+    "monzo": 120,
+    "monzo_text": 120,
+    "monzo_layout": 120,
+    "pdfplumber": 60,
+    "regex": 25,
+    "emergency": 45,
 }
 
 # Auto fast mode on Streamlit Cloud

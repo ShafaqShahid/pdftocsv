@@ -64,12 +64,27 @@ if uploaded is not None:
 
         csv_bytes: bytes | None = None
         result = None
+        debug_text_sample = ""
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            pdf_path = tmp_path / uploaded.name
-            csv_path = tmp_path / f"{Path(uploaded.name).stem}.csv"
-            pdf_path.write_bytes(uploaded.getvalue())
+            # Safe filename (avoids path/encoding issues on Streamlit Cloud)
+            pdf_path = tmp_path / "statement.pdf"
+            csv_path = tmp_path / "output.csv"
+            pdf_bytes = uploaded.getvalue()
+            if not pdf_bytes:
+                st.error("Uploaded file is empty.")
+                st.stop()
+            pdf_path.write_bytes(pdf_bytes)
+
+            if debug:
+                try:
+                    import pdfplumber
+
+                    with pdfplumber.open(pdf_path) as pdf:
+                        debug_text_sample = (pdf.pages[0].extract_text() or "")[:500]
+                except Exception as ex:
+                    debug_text_sample = f"PDF read error: {ex}"
 
             with st.status("Extracting transactions…", expanded=True) as status:
                 def on_progress(msg: str) -> None:
@@ -136,10 +151,20 @@ if uploaded is not None:
             for err in result.errors:
                 st.markdown(f"- {err}")
             st.markdown(
+                f"**Detected:** {result.template_name or 'unknown'} bank template · "
+                f"**Strategy tried:** {result.strategy or 'none'}"
+            )
+            if debug and debug_text_sample:
+                st.code(
+                    debug_text_sample
+                    if debug_text_sample
+                    else "(no text on page 1 — scanned PDF?)"
+                )
+            st.markdown(
                 "**Tips:**\n"
-                "- Use a PDF from your bank’s website (not a scan/photo)\n"
-                "- Keep **Fast mode** on\n"
-                "- Try **Debug mode** if it keeps failing"
+                "- Use a PDF downloaded from your bank (not a photo scan)\n"
+                "- Push the latest code to GitHub and redeploy Streamlit\n"
+                "- Enable **Debug mode** to see if page 1 has readable text"
             )
 
 else:

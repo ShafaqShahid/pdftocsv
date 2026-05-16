@@ -84,26 +84,48 @@ def _row_quality(rows: list[RawRow]) -> float:
 
 def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
     """Extract Monzo transactions — picks best of layout vs text parsing."""
-    from parser.monzo_layout_parser import extract_monzo_layout
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        logger.error("Monzo parser: file not found %s", pdf_path)
+        return []
 
-    layout_rows = extract_monzo_layout(pdf_path)
-    text_rows = _extract_monzo_text(pdf_path)
+    try:
+        from parser.monzo_layout_parser import extract_monzo_layout
 
-    q_layout = _row_quality(layout_rows)
-    q_text = _row_quality(text_rows)
-    logger.info(
-        "Monzo compare: layout=%d (q=%.2f) text=%d (q=%.2f)",
-        len(layout_rows),
-        q_layout,
-        len(text_rows),
-        q_text,
-    )
+        layout_rows: list[RawRow] = []
+        text_rows: list[RawRow] = []
+        try:
+            layout_rows = extract_monzo_layout(pdf_path)
+        except Exception as e:
+            logger.warning("Monzo layout failed: %s", e)
+        try:
+            text_rows = _extract_monzo_text(pdf_path)
+        except Exception as e:
+            logger.warning("Monzo text failed: %s", e)
 
-    if q_text >= q_layout and text_rows:
-        return text_rows
-    if layout_rows:
-        return layout_rows
-    return text_rows
+        q_layout = _row_quality(layout_rows)
+        q_text = _row_quality(text_rows)
+        logger.info(
+            "Monzo compare: layout=%d (q=%.2f) text=%d (q=%.2f)",
+            len(layout_rows),
+            q_layout,
+            len(text_rows),
+            q_text,
+        )
+
+        if q_text >= q_layout and text_rows:
+            return text_rows
+        if layout_rows:
+            return layout_rows
+        if text_rows:
+            return text_rows
+
+        from parser.emergency_extract import emergency_extract
+
+        return emergency_extract(pdf_path)
+    except Exception as e:
+        logger.exception("Monzo extract failed: %s", e)
+        return []
 
 
 def _extract_monzo_text(pdf_path: Path) -> list[RawRow]:
@@ -157,6 +179,9 @@ def parse_monzo_lines(lines: list[str]) -> list[RawRow]:
 
         if _should_skip(line):
             continue
+
+        if DATE_AMOUNT_BALANCE.match(line) or DATE_FULL.match(line):
+            seen_table = True
 
         if not seen_table:
             continue
