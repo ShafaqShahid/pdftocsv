@@ -1,0 +1,8 @@
+services:
+  parser:
+    build: .
+    volumes:
+      - ./pdfs:/data/in
+      - ./outputs:/data/out
+      - ./logs:/app/logs
+    command: ["python", "main.py", "/data/in", "/data/out"]
