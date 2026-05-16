@@ -13,9 +13,21 @@ from parser.header_footer import HeaderFooterCleaner
 from parser.row_reconstructor import RowReconstructor
 from parser.templates.base import RawRow
 from utils.logging_setup import get_failed_rows_path, get_validation_log_path
+from utils.amounts import parse_amount
 from validators.row_validator import ValidationEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _best_effort_rows(rows: list[RawRow]) -> list[RawRow]:
+    """Include rows that have enough data to be useful in a partial CSV."""
+    kept: list[RawRow] = []
+    for row in rows:
+        has_amount = parse_amount(row.amount) is not None
+        has_text = bool(row.description.strip()) or bool(row.date.strip())
+        if has_amount or (has_text and row.date):
+            kept.append(row)
+    return kept
 
 
 @dataclass
@@ -23,10 +35,13 @@ class ProcessingResult:
     """Result of processing a single PDF."""
 
     success: bool
+    partial: bool = False
     template_name: str = ""
     locale: str = ""
     strategy: str = ""
     row_count: int = 0
+    rows_extracted: int = 0
+    rows_rejected: int = 0
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     output_path: Path | None = None
@@ -87,30 +102,56 @@ class PipelineOrchestrator:
         validation_path = get_validation_log_path(self.run_id) if self.run_id else None
         validator = ValidationEngine(template, validation_path)
         validation = validator.validate(rows)
-        out.warnings = validation.warnings
+        out.warnings = list(validation.warnings)
+        out.rows_extracted = len(rows)
+        out.rows_rejected = len(validation.critical_errors)
 
         for w in validation.warnings[:20]:
             logger.warning(w)
 
         if validation.critical_errors:
-            out.errors.extend(validation.critical_errors)
-            for e in validation.critical_errors:
+            out.errors.extend(validation.critical_errors[:50])
+            if len(validation.critical_errors) > 50:
+                out.errors.append(
+                    f"... and {len(validation.critical_errors) - 50} more row errors"
+                )
+            for e in validation.critical_errors[:10]:
                 logger.error(e)
-            return out
 
-        if not validation.rows:
+        export_rows = validation.rows
+        if not export_rows:
+            export_rows = _best_effort_rows(rows)
+            if export_rows:
+                out.warnings.append(
+                    f"Best-effort export: {len(export_rows)} rows "
+                    f"(validation failed for {len(rows)} extracted rows)."
+                )
+
+        if not export_rows:
             out.errors.append("No valid rows after validation.")
             return out
 
-        out.row_count = len(validation.rows)
+        out.row_count = len(export_rows)
+        has_validation_issues = bool(validation.critical_errors) or len(export_rows) < len(rows)
+
         if output_path:
             output_path = Path(output_path)
-            generate_csv(validation.rows, output_path)
+            generate_csv(export_rows, output_path)
             out.output_path = output_path
 
-        out.success = True
+        if has_validation_issues:
+            out.partial = True
+            out.warnings.insert(
+                0,
+                f"Partial export: {out.row_count} of {len(rows)} extracted rows included in CSV.",
+            )
+            logger.warning("Partial CSV written: %d rows", out.row_count)
+        else:
+            out.success = True
+
         return out
 
     def process(self, pdf_path: Path, output_path: Path) -> bool:
-        """Process one PDF. Returns True on success."""
-        return self.run(pdf_path, output_path).success
+        """Process one PDF. Returns True if full success or partial CSV written."""
+        result = self.run(pdf_path, output_path)
+        return result.success or result.partial

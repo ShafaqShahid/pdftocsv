@@ -62,6 +62,9 @@ if uploaded is not None:
             debug=debug, run_id=run_id, fast_mode=fast_mode
         )
 
+        csv_bytes: bytes | None = None
+        result = None
+
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             pdf_path = tmp_path / uploaded.name
@@ -74,25 +77,50 @@ if uploaded is not None:
 
                 orchestrator.set_progress_callback(on_progress)
                 result = orchestrator.run(pdf_path, csv_path)
+
                 if result.success:
                     status.update(label="Done!", state="complete")
+                elif result.partial:
+                    status.update(
+                        label=f"Partial — {result.row_count} rows exported",
+                        state="complete",
+                    )
                 else:
-                    status.update(label="Conversion failed", state="error")
+                    status.update(label="No rows extracted", state="error")
 
-        if result.success and result.output_path and result.output_path.exists():
-            csv_bytes = result.output_path.read_bytes()
-            st.success(
-                f"Extracted **{result.row_count}** transactions "
-                f"({result.template_name} · {result.strategy or 'pipeline'})"
-            )
+            if result and result.output_path and result.output_path.exists():
+                csv_bytes = result.output_path.read_bytes()
+
+        has_csv = csv_bytes is not None and len(csv_bytes) > 0
+
+        if has_csv and result:
+            if result.success:
+                st.success(
+                    f"Extracted **{result.row_count}** transactions "
+                    f"({result.template_name} · {result.strategy or 'pipeline'})"
+                )
+            elif result.partial:
+                st.warning(
+                    f"**Partial conversion** — **{result.row_count}** of "
+                    f"**{result.rows_extracted}** extracted rows saved. "
+                    f"Review the CSV; some rows may be missing or need fixing."
+                )
+            else:
+                st.info(f"Exported **{result.row_count}** rows.")
+
+            if result.errors:
+                with st.expander(f"Issues ({len(result.errors)})", expanded=result.partial):
+                    for err in result.errors[:40]:
+                        st.text(err)
 
             if result.warnings:
                 with st.expander(f"Warnings ({len(result.warnings)})", expanded=False):
-                    for w in result.warnings[:30]:
+                    for w in result.warnings[:40]:
                         st.text(w)
 
             st.download_button(
-                label="Download CSV",
+                label="Download CSV"
+                + (" (partial)" if result.partial else ""),
                 data=csv_bytes,
                 file_name=f"{Path(uploaded.name).stem}.csv",
                 mime="text/csv",
@@ -101,17 +129,17 @@ if uploaded is not None:
             )
 
             with st.expander("Preview first rows"):
-                st.text(csv_bytes.decode("utf-8")[:2000])
-        else:
-            st.error("Conversion failed.")
+                st.text(csv_bytes.decode("utf-8")[:3000])
+
+        elif result:
+            st.error("Could not extract any transactions from this PDF.")
             for err in result.errors:
                 st.markdown(f"- {err}")
             st.markdown(
                 "**Tips:**\n"
                 "- Use a PDF from your bank’s website (not a scan/photo)\n"
                 "- Keep **Fast mode** on\n"
-                "- Try a smaller date range if the file is huge\n"
-                "- Enable **Debug mode** and redeploy if it keeps failing"
+                "- Try **Debug mode** if it keeps failing"
             )
 
 else:
@@ -122,6 +150,6 @@ else:
         2. **Convert to CSV** (keep *Fast mode* on)  
         3. **Download CSV** → open in Excel or Google Sheets  
 
-        First conversion after deploy can take 1–2 minutes while the server wakes up.
+        If conversion is incomplete, you can still **download a partial CSV** with the rows we found.
         """
     )

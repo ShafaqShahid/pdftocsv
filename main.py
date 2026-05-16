@@ -41,7 +41,8 @@ def process_single(
     run_id: str,
 ) -> bool:
     orchestrator = PipelineOrchestrator(debug=debug, run_id=run_id)
-    return orchestrator.process(pdf_path, output_path)
+    result = orchestrator.run(pdf_path, output_path)
+    return result.success or result.partial
 
 
 def main() -> int:
@@ -95,8 +96,21 @@ def main() -> int:
         else:
             out = output_path.with_suffix(".csv")
 
-    ok = process_single(input_path, out, args.debug, run_id)
-    return 0 if ok else 1
+    orchestrator = PipelineOrchestrator(debug=args.debug, run_id=run_id)
+    result = orchestrator.run(input_path, out)
+    if result.success:
+        logger.info("Wrote %d rows to %s", result.row_count, out)
+        return 0
+    if result.partial:
+        logger.warning(
+            "Partial CSV: %d of %d rows written to %s",
+            result.row_count,
+            result.rows_extracted,
+            out,
+        )
+        return 0
+    logger.error("Conversion failed with no exportable rows")
+    return 1
 
 
 if __name__ == "__main__":

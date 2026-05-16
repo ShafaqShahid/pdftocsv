@@ -23,6 +23,7 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
     critical_errors: list[str] = field(default_factory=list)
     removed_duplicates: int = 0
+    skipped_rows: int = 0
 
 
 class ValidationEngine:
@@ -46,6 +47,7 @@ class ValidationEngine:
             is_critical = any("critical" in w for w in issues)
             if is_critical:
                 result.critical_errors.extend(issues)
+                result.skipped_rows += 1
                 continue
             result.warnings.extend(issues)
 
