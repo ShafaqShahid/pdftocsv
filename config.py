@@ -25,6 +25,7 @@ EXTRACTION_STRATEGIES = [
 
 # Fast mode for web/Streamlit: skip camelot, pdfplumber first
 FAST_EXTRACTION_STRATEGIES = [
+    "monzo_text",
     "pdfplumber",
     "regex",
 ]
@@ -33,6 +34,7 @@ FAST_EXTRACTION_STRATEGIES = [
 STRATEGY_TIMEOUT_SECONDS = {
     "camelot_lattice": 45,
     "camelot_stream": 45,
+    "monzo_text": 60,
     "pdfplumber": 90,
     "regex": 60,
 }

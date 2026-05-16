@@ -11,16 +11,24 @@ from utils.amounts import parse_amount
 class MonzoTemplate(BankTemplate):
     name = "monzo"
     locale = "uk"
-    keywords = ["monzo", "faster payment", "monzo bank", "pots"]
+    keywords = [
+        "monzo",
+        "faster payment",
+        "monzo bank",
+        "business account statement",
+        "monzo.com",
+    ]
 
     def detect_score(self, pdf_text: str, first_page_tables: list[list[list[str]]]) -> float:
         text = pdf_text.lower()
         score = 0.0
+        if "monzo" in text:
+            score += 0.4
+        if "business account statement" in text:
+            score += 0.35
         for kw in self.keywords:
             if kw in text:
-                score += 0.35
-        if "monzo" in text:
-            score += 0.25
+                score += 0.15
         return min(score, 1.0)
 
     def normalize_row(self, cells: list[str]) -> Optional[NormalizedRow]:

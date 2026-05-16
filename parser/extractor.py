@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 import config
 from parser.camelot_extractor import extract_with_camelot
+from parser.monzo_statement_parser import extract_monzo_statement
 from parser.pdfplumber_extractor import extract_with_pdfplumber
 from parser.regex_extractor import extract_with_regex
 from parser.templates.base import BankTemplate, RawRow
@@ -36,8 +37,14 @@ class TableExtractor:
         """Return (rows, strategy_name) using best successful extractor."""
         if self.fast_mode:
             strategy_names = list(config.FAST_EXTRACTION_STRATEGIES)
+            if template.name == "monzo" and "monzo_text" not in strategy_names:
+                strategy_names.insert(0, "monzo_text")
         else:
             strategy_names = list(config.EXTRACTION_STRATEGIES)
+            if template.name == "monzo":
+                strategy_names = ["monzo_text"] + [
+                    s for s in strategy_names if s != "monzo_text"
+                ]
 
         strategies = [
             (name, self._strategy_fn(name, pdf_path, template))
@@ -86,6 +93,8 @@ class TableExtractor:
         return [], ""
 
     def _strategy_fn(self, name: str, pdf_path: Path, template: BankTemplate):
+        if name == "monzo_text":
+            return lambda: extract_monzo_statement(pdf_path)
         if name == "camelot_lattice":
             return lambda: extract_with_camelot(pdf_path, template, "lattice", self.debug)
         if name == "camelot_stream":
