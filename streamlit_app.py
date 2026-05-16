@@ -29,13 +29,18 @@ st.caption(
 with st.sidebar:
     st.header("Options")
     debug = st.checkbox("Debug mode", help="More detailed logs (for troubleshooting)")
+    fast_mode = st.checkbox(
+        "Fast mode (recommended)",
+        value=True,
+        help="Skips slow Camelot step. Usually finishes in under a minute.",
+    )
     st.markdown("---")
     st.markdown("**Supported banks (auto-detected)**")
     st.markdown("Monzo · HSBC · Barclays · Generic UK")
     st.markdown("---")
     st.markdown(
-        "[Source on GitHub](https://github.com) · "
-        "Works best with text-based PDFs (not scanned photos)."
+        "Works best with **digital PDFs** (not phone photos). "
+        "Large statements may take 1–2 minutes."
     )
 
 uploaded = st.file_uploader(
@@ -47,25 +52,38 @@ uploaded = st.file_uploader(
 if uploaded is not None:
     st.info(f"**{uploaded.name}** · {uploaded.size / 1024:.1f} KB")
 
+    if uploaded.size > 15 * 1024 * 1024:
+        st.warning("Large file (>15 MB) — conversion may take several minutes or time out.")
+
     if st.button("Convert to CSV", type="primary", use_container_width=True):
         run_id = uuid.uuid4().hex[:8]
         setup_logging(debug=debug)
-        orchestrator = PipelineOrchestrator(debug=debug, run_id=run_id)
+        orchestrator = PipelineOrchestrator(
+            debug=debug, run_id=run_id, fast_mode=fast_mode
+        )
 
-        with st.spinner("Extracting transactions…"):
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_path = Path(tmp)
-                pdf_path = tmp_path / uploaded.name
-                csv_path = tmp_path / f"{Path(uploaded.name).stem}.csv"
-                pdf_path.write_bytes(uploaded.getvalue())
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pdf_path = tmp_path / uploaded.name
+            csv_path = tmp_path / f"{Path(uploaded.name).stem}.csv"
+            pdf_path.write_bytes(uploaded.getvalue())
 
+            with st.status("Extracting transactions…", expanded=True) as status:
+                def on_progress(msg: str) -> None:
+                    status.write(msg)
+
+                orchestrator.set_progress_callback(on_progress)
                 result = orchestrator.run(pdf_path, csv_path)
+                if result.success:
+                    status.update(label="Done!", state="complete")
+                else:
+                    status.update(label="Conversion failed", state="error")
 
         if result.success and result.output_path and result.output_path.exists():
             csv_bytes = result.output_path.read_bytes()
             st.success(
                 f"Extracted **{result.row_count}** transactions "
-                f"({result.template_name} template · {result.strategy or 'pipeline'})"
+                f"({result.template_name} · {result.strategy or 'pipeline'})"
             )
 
             if result.warnings:
@@ -89,19 +107,21 @@ if uploaded is not None:
             for err in result.errors:
                 st.markdown(f"- {err}")
             st.markdown(
-                "**Tips:** Use a digital PDF (not a photo scan). "
-                "Try debug mode, or run locally with `python main.py file.pdf out.csv --debug`."
+                "**Tips:**\n"
+                "- Use a PDF from your bank’s website (not a scan/photo)\n"
+                "- Keep **Fast mode** on\n"
+                "- Try a smaller date range if the file is huge\n"
+                "- Enable **Debug mode** and redeploy if it keeps failing"
             )
 
 else:
     st.markdown(
         """
         ### How to use
-        1. Click **Browse files** and select your bank statement PDF  
-        2. Click **Convert to CSV**  
-        3. Click **Download CSV** and open in Excel or Google Sheets  
+        1. **Browse files** → select your bank statement PDF  
+        2. **Convert to CSV** (keep *Fast mode* on)  
+        3. **Download CSV** → open in Excel or Google Sheets  
 
-        ### Deploy your own (free)
-        Push this repo to GitHub, then deploy at [share.streamlit.io](https://share.streamlit.io) — no Python install on your PC.
+        First conversion after deploy can take 1–2 minutes while the server wakes up.
         """
     )

@@ -15,13 +15,34 @@ SAMPLE_OUTPUT_DIR = PROJECT_ROOT / "sample_output"
 # Output columns (fixed order)
 OUTPUT_COLUMNS = ["Date", "Description", "Amount", "Balance"]
 
-# Extraction strategy order
+# Extraction strategy order (CLI / full mode — camelot is slow on cloud)
 EXTRACTION_STRATEGIES = [
     "camelot_lattice",
     "camelot_stream",
     "pdfplumber",
     "regex",
 ]
+
+# Fast mode for web/Streamlit: skip camelot, pdfplumber first
+FAST_EXTRACTION_STRATEGIES = [
+    "pdfplumber",
+    "regex",
+]
+
+# Per-strategy timeouts (seconds) — prevents infinite "loading"
+STRATEGY_TIMEOUT_SECONDS = {
+    "camelot_lattice": 45,
+    "camelot_stream": 45,
+    "pdfplumber": 90,
+    "regex": 60,
+}
+
+# Auto fast mode on Streamlit Cloud
+FAST_MODE = bool(
+    os.environ.get("STREAMLIT_SERVER_PORT")
+    or os.environ.get("STREAMLIT_RUNTIME_ENV")
+    or os.environ.get("PDF_CSV_FAST_MODE", "").lower() in ("1", "true", "yes")
+)
 
 # Minimum quality score (0-1) to accept extraction result
 QUALITY_SCORE_THRESHOLD = 0.5

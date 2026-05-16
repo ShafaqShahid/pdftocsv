@@ -35,11 +35,24 @@ class ProcessingResult:
 class PipelineOrchestrator:
     """Detect template, extract, reconstruct, validate, write CSV."""
 
-    def __init__(self, debug: bool = False, run_id: str = "") -> None:
+    def __init__(
+        self,
+        debug: bool = False,
+        run_id: str = "",
+        fast_mode: bool | None = None,
+    ) -> None:
         self.debug = debug
         self.run_id = run_id
         self.detector = BankTemplateDetector()
-        self.extractor = TableExtractor(debug=debug)
+        self.extractor = TableExtractor(debug=debug, fast_mode=fast_mode)
+        self._on_progress = None
+
+    def set_progress_callback(self, callback) -> None:
+        self._on_progress = callback
+
+    def _progress(self, msg: str) -> None:
+        if self._on_progress:
+            self._on_progress(msg)
 
     def run(self, pdf_path: Path, output_path: Path | None = None) -> ProcessingResult:
         """Process one PDF and return detailed result."""
@@ -47,12 +60,15 @@ class PipelineOrchestrator:
         out = ProcessingResult(success=False)
 
         logger.info("Processing: %s", pdf_path)
+        self._progress("Detecting bank template…")
         template = self.detector.detect(pdf_path)
         out.template_name = template.name
         out.locale = template.locale
         logger.info("Template: %s, locale: %s", template.name, template.locale)
 
-        rows, strategy = self.extractor.extract(pdf_path, template)
+        rows, strategy = self.extractor.extract(
+            pdf_path, template, on_progress=self._on_progress
+        )
         out.strategy = strategy
         if not rows:
             out.errors.append("No transactions could be extracted from this PDF.")
