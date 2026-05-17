@@ -81,14 +81,27 @@ def _row_quality(rows: list[RawRow]) -> float:
     return good / len(rows)
 
 
-def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
-    """Extract Monzo transactions — picks best of layout vs text parsing."""
+def extract_monzo_statement(pdf_path: Path, fast: bool | None = None) -> list[RawRow]:
+    """Extract Monzo transactions — text parser (fast) or layout+text (full)."""
+    import config
+
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         logger.error("Monzo parser: file not found %s", pdf_path)
         return []
 
+    use_fast = config.FAST_MODE if fast is None else fast
+
     try:
+        if use_fast:
+            logger.info("Monzo fast path (text only, no layout)")
+            text_rows = _extract_monzo_text(pdf_path)
+            if text_rows:
+                return text_rows
+            from parser.emergency_extract import emergency_extract
+
+            return emergency_extract(pdf_path)
+
         from parser.monzo_layout_parser import extract_monzo_layout
 
         layout_rows: list[RawRow] = []
@@ -104,14 +117,6 @@ def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
 
         q_layout = _row_quality(layout_rows)
         q_text = _row_quality(text_rows)
-        logger.info(
-            "Monzo compare: layout=%d (q=%.2f) text=%d (q=%.2f)",
-            len(layout_rows),
-            q_layout,
-            len(text_rows),
-            q_text,
-        )
-
         if q_text >= q_layout and text_rows:
             return text_rows
         if layout_rows:

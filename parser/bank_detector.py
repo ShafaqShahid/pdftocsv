@@ -9,7 +9,7 @@ from typing import Optional
 import pdfplumber
 
 import config
-from parser.pdf_reader import read_pdf_lines, read_pdf_page_text
+from parser.pdf_reader import read_pdf_lines, read_pdf_page_text  # noqa: F401
 from parser.templates.base import BankTemplate
 from parser.templates.barclays import BarclaysTemplate
 from parser.templates.generic import GenericTemplate
@@ -60,6 +60,15 @@ class BankTemplateDetector:
     def _read_pdf_preview(
         self, pdf_path: Path
     ) -> tuple[str, list[list[list[str]]]]:
+        import config
+
+        if config.FAST_MODE:
+            text = read_pdf_page_text(pdf_path, 0)
+            if len(text) < 100:
+                lines = read_pdf_lines(pdf_path)
+                text = "\n".join(lines[:200])
+            return text, []
+
         lines = read_pdf_lines(pdf_path)
         text = "\n".join(lines)
         if not text.strip():
@@ -67,6 +76,8 @@ class BankTemplateDetector:
 
         first_tables: list[list[list[str]]] = []
         try:
+            import pdfplumber
+
             with pdfplumber.open(pdf_path) as pdf:
                 if pdf.pages:
                     tables = pdf.pages[0].extract_tables() or []

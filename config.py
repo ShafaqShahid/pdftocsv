@@ -37,7 +37,7 @@ SKIP_REGEX_IN_FAST_MODE = True
 STRATEGY_TIMEOUT_SECONDS = {
     "camelot_lattice": 45,
     "camelot_stream": 45,
-    "monzo": 120,
+    "monzo": 90,
     "monzo_text": 120,
     "monzo_layout": 120,
     "pdfplumber": 60,

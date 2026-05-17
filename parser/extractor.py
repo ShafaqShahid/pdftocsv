@@ -108,6 +108,9 @@ class TableExtractor:
         return [], ""
 
     def _strategy_list(self, template: BankTemplate) -> list[str]:
+        if self.fast_mode and template.name == "monzo":
+            return ["monzo"]
+
         if self.fast_mode:
             names = list(config.FAST_EXTRACTION_STRATEGIES)
         else:
