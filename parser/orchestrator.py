@@ -87,9 +87,25 @@ class PipelineOrchestrator:
         )
         out.strategy = strategy
         if not rows:
-            out.errors.append("No transactions could be extracted from this PDF.")
-            logger.error("No transactions extracted from %s", pdf_path)
-            return out
+            from parser.emergency_extract import emergency_extract
+            from parser.pdf_reader import pdf_page_count, read_pdf_page_text
+
+            self._progress("Running emergency text scan…")
+            rows = emergency_extract(pdf_path)
+            strategy = "emergency" if rows else strategy
+            out.strategy = strategy
+
+            if not rows:
+                pages = pdf_page_count(pdf_path)
+                sample = read_pdf_page_text(pdf_path, 0)
+                out.errors.append("No transactions could be extracted from this PDF.")
+                out.errors.append(f"PDF pages: {pages}, characters on page 1: {len(sample)}")
+                if len(sample) < 20:
+                    out.errors.append(
+                        "Page 1 has almost no text — this may be a scanned/image PDF."
+                    )
+                logger.error("No transactions extracted from %s", pdf_path)
+                return out
 
         logger.info("Extraction strategy: %s (%d raw rows)", strategy, len(rows))
 
@@ -102,7 +118,13 @@ class PipelineOrchestrator:
             reconstructor = RowReconstructor(template, failed_path)
             rows = reconstructor.reconstruct(rows)
 
-        rows = post_process_rows(rows, template.locale)
+        raw_before_post = list(rows)
+        rows = post_process_rows(rows, template.locale, strict=True)
+        if not rows and raw_before_post:
+            out.warnings.append(
+                "Strict filter removed all rows; using lenient filter."
+            )
+            rows = post_process_rows(raw_before_post, template.locale, strict=False)
 
         validation_path = get_validation_log_path(self.run_id) if self.run_id else None
         validator = ValidationEngine(template, validation_path)

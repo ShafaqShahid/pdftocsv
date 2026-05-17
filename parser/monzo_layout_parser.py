@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pdfplumber
 
+from parser.pdf_reader import read_pdf_lines
 from parser.templates.base import RawRow
 from utils.amounts import parse_amount
 from utils.dates import parse_date

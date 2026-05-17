@@ -22,10 +22,13 @@ WEAK_DESC = re.compile(
 )
 
 
-def post_process_rows(rows: list[RawRow], locale: str = "uk") -> list[RawRow]:
+def post_process_rows(
+    rows: list[RawRow], locale: str = "uk", strict: bool = True
+) -> list[RawRow]:
     """Clean and filter extracted rows."""
     cleaned: list[RawRow] = []
     seen: set[str] = set()
+    min_desc = 12 if strict else 3
 
     for row in rows:
         if not row.date or not parse_date(row.date, locale):
@@ -37,7 +40,7 @@ def post_process_rows(rows: list[RawRow], locale: str = "uk") -> list[RawRow]:
             continue
         if WEAK_DESC.match(desc):
             continue
-        if len(desc) < 12 and not re.search(
+        if len(desc) < min_desc and not re.search(
             r"reference:|direct debit|faster payment|transfer|expenses", desc, re.I
         ):
             continue

@@ -12,7 +12,10 @@ from pathlib import Path
 import streamlit as st
 
 from parser.orchestrator import PipelineOrchestrator
+from parser.pdf_reader import pdf_page_count, read_pdf_page_text
 from utils.logging_setup import setup_logging
+
+APP_VERSION = "2.2.0"
 
 st.set_page_config(
     page_title="Bank Statement PDF → CSV",
@@ -21,72 +24,64 @@ st.set_page_config(
 )
 
 st.title("Bank Statement PDF → CSV")
-st.caption(
-    "Upload a bank statement PDF and download a structured CSV. "
-    "No install needed — runs in the cloud."
-)
+st.caption(f"Version {APP_VERSION} · Upload a digital bank statement PDF")
 
 with st.sidebar:
     st.header("Options")
-    debug = st.checkbox("Debug mode", help="More detailed logs (for troubleshooting)")
-    fast_mode = st.checkbox(
-        "Fast mode (recommended)",
-        value=True,
-        help="Skips slow Camelot step. Usually finishes in under a minute.",
-    )
+    debug = st.checkbox("Debug mode", help="Show PDF text sample if conversion fails")
+    st.markdown("**Fast mode is always on** for cloud (reliable).")
     st.markdown("---")
-    st.markdown("**Supported banks (auto-detected)**")
-    st.markdown("Monzo · HSBC · Barclays · Generic UK")
+    st.markdown("**Best results:** Monzo Business PDF from app/web")
     st.markdown("---")
-    st.markdown(
-        "Works best with **digital PDFs** (not phone photos). "
-        "Large statements may take 1–2 minutes."
-    )
+    st.caption(f"App version: **{APP_VERSION}**")
 
 uploaded = st.file_uploader(
     "Choose a PDF bank statement",
     type=["pdf"],
-    help="Your file is processed in memory and not stored permanently.",
+    help="Digital PDF from your bank — not a photo or screenshot.",
 )
 
 if uploaded is not None:
     st.info(f"**{uploaded.name}** · {uploaded.size / 1024:.1f} KB")
 
     if uploaded.size > 15 * 1024 * 1024:
-        st.warning("Large file (>15 MB) — conversion may take several minutes or time out.")
+        st.warning("Large file (>15 MB) — may take 1–2 minutes.")
 
     if st.button("Convert to CSV", type="primary", use_container_width=True):
         run_id = uuid.uuid4().hex[:8]
-        setup_logging(debug=debug)
+        setup_logging(debug=True)
         orchestrator = PipelineOrchestrator(
-            debug=debug, run_id=run_id, fast_mode=fast_mode
+            debug=True, run_id=run_id, fast_mode=True
         )
 
         csv_bytes: bytes | None = None
         result = None
-        debug_text_sample = ""
+        diag_pages = 0
+        diag_chars = 0
+        diag_sample = ""
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            # Safe filename (avoids path/encoding issues on Streamlit Cloud)
             pdf_path = tmp_path / "statement.pdf"
             csv_path = tmp_path / "output.csv"
             pdf_bytes = uploaded.getvalue()
-            if not pdf_bytes:
-                st.error("Uploaded file is empty.")
+            if not pdf_bytes or len(pdf_bytes) < 100:
+                st.error("Uploaded file is empty or too small to be a valid PDF.")
                 st.stop()
             pdf_path.write_bytes(pdf_bytes)
 
-            if debug:
-                try:
-                    import pdfplumber
-
-                    with pdfplumber.open(pdf_path) as pdf:
-                        debug_text_sample = (pdf.pages[0].extract_text() or "")[:500]
-                except Exception as ex:
-                    debug_text_sample = f"PDF read error: {ex}"
+            diag_pages = pdf_page_count(pdf_path)
+            diag_sample = read_pdf_page_text(pdf_path, 0)
+            diag_chars = len(diag_sample)
 
             with st.status("Extracting transactions…", expanded=True) as status:
+                status.write(f"PDF: {diag_pages} pages, {diag_chars} chars on page 1")
+
+                if diag_chars < 30:
+                    status.write(
+                        "⚠️ Very little text on page 1 — scanned PDFs may not work."
+                    )
+
                 def on_progress(msg: str) -> None:
                     status.write(msg)
 
@@ -97,11 +92,11 @@ if uploaded is not None:
                     status.update(label="Done!", state="complete")
                 elif result.partial:
                     status.update(
-                        label=f"Partial — {result.row_count} rows exported",
+                        label=f"Partial — {result.row_count} rows",
                         state="complete",
                     )
                 else:
-                    status.update(label="No rows extracted", state="error")
+                    status.update(label="Failed", state="error")
 
             if result and result.output_path and result.output_path.exists():
                 csv_bytes = result.output_path.read_bytes()
@@ -109,72 +104,65 @@ if uploaded is not None:
         has_csv = csv_bytes is not None and len(csv_bytes) > 0
 
         if has_csv and result:
-            if result.success:
-                st.success(
-                    f"Extracted **{result.row_count}** transactions "
-                    f"({result.template_name} · {result.strategy or 'pipeline'})"
-                )
-            elif result.partial:
-                st.warning(
-                    f"**Partial conversion** — **{result.row_count}** of "
-                    f"**{result.rows_extracted}** extracted rows saved. "
-                    f"Review the CSV; some rows may be missing or need fixing."
-                )
-            else:
-                st.info(f"Exported **{result.row_count}** rows.")
-
-            if result.errors:
-                with st.expander(f"Issues ({len(result.errors)})", expanded=result.partial):
-                    for err in result.errors[:40]:
-                        st.text(err)
-
+            st.success(
+                f"**{result.row_count}** transactions · "
+                f"{result.template_name} · {result.strategy}"
+            )
             if result.warnings:
-                with st.expander(f"Warnings ({len(result.warnings)})", expanded=False):
-                    for w in result.warnings[:40]:
+                with st.expander("Warnings"):
+                    for w in result.warnings[:25]:
                         st.text(w)
-
             st.download_button(
-                label="Download CSV"
-                + (" (partial)" if result.partial else ""),
+                label="Download CSV",
                 data=csv_bytes,
                 file_name=f"{Path(uploaded.name).stem}.csv",
                 mime="text/csv",
                 type="primary",
                 use_container_width=True,
             )
-
-            with st.expander("Preview first rows"):
-                st.text(csv_bytes.decode("utf-8")[:3000])
+            with st.expander("Preview"):
+                st.text(csv_bytes.decode("utf-8")[:4000])
 
         elif result:
-            st.error("Could not extract any transactions from this PDF.")
+            st.error("Conversion failed — no transactions extracted.")
+            st.markdown(
+                f"**App version:** {APP_VERSION} · "
+                f"**Bank:** {result.template_name} · "
+                f"**Strategy:** {result.strategy or 'none'}"
+            )
+            st.markdown(
+                f"**PDF check:** {diag_pages} pages · "
+                f"{diag_chars} characters readable on page 1"
+            )
             for err in result.errors:
                 st.markdown(f"- {err}")
-            st.markdown(
-                f"**Detected:** {result.template_name or 'unknown'} bank template · "
-                f"**Strategy tried:** {result.strategy or 'none'}"
-            )
-            if debug and debug_text_sample:
-                st.code(
-                    debug_text_sample
-                    if debug_text_sample
-                    else "(no text on page 1 — scanned PDF?)"
+
+            if diag_sample:
+                with st.expander("Page 1 text sample (what the parser sees)"):
+                    st.code(diag_sample[:1500])
+            else:
+                st.warning(
+                    "No text could be read from page 1. "
+                    "Download the statement from your bank as PDF (not a scan)."
                 )
+
             st.markdown(
-                "**Tips:**\n"
-                "- Use a PDF downloaded from your bank (not a photo scan)\n"
-                "- Push the latest code to GitHub and redeploy Streamlit\n"
-                "- Enable **Debug mode** to see if page 1 has readable text"
+                "**Next steps:**\n"
+                "1. Confirm sidebar shows version **2.2.0** (else redeploy from GitHub)\n"
+                "2. Use the original PDF from Monzo/bank website\n"
+                "3. `git push` latest code and reboot Streamlit app"
             )
+        else:
+            st.error("Unexpected error — no result returned.")
 
 else:
     st.markdown(
         """
-        ### How to use
-        1. **Browse files** → select your bank statement PDF  
-        2. **Convert to CSV** (keep *Fast mode* on)  
-        3. **Download CSV** → open in Excel or Google Sheets  
+        ### Steps
+        1. Upload your bank statement PDF  
+        2. Click **Convert to CSV**  
+        3. Download the file  
 
-        If conversion is incomplete, you can still **download a partial CSV** with the rows we found.
+        **Monzo Business** statements work best. Other banks may vary.
         """
     )

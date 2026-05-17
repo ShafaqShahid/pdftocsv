@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-import pdfplumber
-
+from parser.pdf_reader import read_pdf_lines
 from parser.templates.base import RawRow
 
 logger = logging.getLogger(__name__)
@@ -129,14 +128,8 @@ def extract_monzo_statement(pdf_path: Path) -> list[RawRow]:
 
 
 def _extract_monzo_text(pdf_path: Path) -> list[RawRow]:
-    lines: list[str] = []
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                lines.extend(text.splitlines())
-    except Exception as e:
-        logger.warning("Monzo text read failed: %s", e)
+    lines = read_pdf_lines(pdf_path)
+    if not lines:
         return []
     return parse_monzo_lines(lines)
 

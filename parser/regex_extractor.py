@@ -6,9 +6,8 @@ import logging
 import re
 from pathlib import Path
 
-import pdfplumber
-
 import config
+from parser.pdf_reader import read_pdf_lines
 from parser.templates.base import BankTemplate, RawRow
 from utils.amounts import parse_amount
 from utils.dates import line_starts_with_date
@@ -25,12 +24,11 @@ def extract_with_regex(
     rows: list[RawRow] = []
     locale = template.locale
 
+    lines = read_pdf_lines(pdf_path)
+    text = "\n".join(lines)
     try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages, start=1):
-                text = page.extract_text() or ""
-                page_rows = _parse_text_lines(text, page_num, template, locale)
-                rows.extend(page_rows)
+        page_rows = _parse_text_lines(text, 1, template, locale)
+        rows.extend(page_rows)
     except Exception as e:
         logger.warning("Regex extraction failed: %s", e)
         return []
