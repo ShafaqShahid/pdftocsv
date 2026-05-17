@@ -10,16 +10,29 @@ logger = logging.getLogger(__name__)
 
 def read_pdf_lines(pdf_path: Path) -> list[str]:
     """Return all lines of text from PDF using best available backend."""
-    pdf_path = Path(pdf_path)
-    lines = _read_pdfplumber(pdf_path)
-    if _has_content(lines):
-        logger.info("PDF text via pdfplumber: %d lines", len(lines))
-        return lines
+    import config
 
-    lines = _read_pypdf(pdf_path)
-    if _has_content(lines):
-        logger.info("PDF text via pypdf fallback: %d lines", len(lines))
-        return lines
+    pdf_path = Path(pdf_path)
+
+    # On Streamlit Cloud, pypdf is often more reliable than pdfplumber
+    if config.FAST_MODE:
+        lines = _read_pypdf(pdf_path)
+        if _has_content(lines):
+            logger.info("PDF text via pypdf: %d lines", len(lines))
+            return lines
+        lines = _read_pdfplumber(pdf_path)
+        if _has_content(lines):
+            logger.info("PDF text via pdfplumber: %d lines", len(lines))
+            return lines
+    else:
+        lines = _read_pdfplumber(pdf_path)
+        if _has_content(lines):
+            logger.info("PDF text via pdfplumber: %d lines", len(lines))
+            return lines
+        lines = _read_pypdf(pdf_path)
+        if _has_content(lines):
+            logger.info("PDF text via pypdf: %d lines", len(lines))
+            return lines
 
     logger.error("No text extracted from PDF: %s", pdf_path)
     return []
